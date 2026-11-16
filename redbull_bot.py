@@ -10,7 +10,7 @@ DISCORD_USER_ID = "699686432293519532"
 
 ZIP_CODE = "58239"
 QUERY = "Red Bull"
-MAX_PRICE = 0.99  # Alles unter 1,00 €
+MAX_PRICE = 1.00  # Bis einschließlich 1,00 €
 SEEN_FILE = "seen_deals.json"
 
 API_URL = "https://api.marktguru.de/api/v1/offers/search"
@@ -24,7 +24,6 @@ def get_marktguru_keys():
     res.raise_for_status()
     html = res.text
 
-    # Marktguru bettet config/apiKey direkt im HTML/JS ein
     api_match = re.search(r'"apiKey"\s*:\s*"([^"]+)"', html)
     client_match = re.search(r'"clientKey"\s*:\s*"([^"]+)"', html)
 
@@ -64,7 +63,6 @@ def check_redbull():
 
     try:
         api_key, client_key = get_marktguru_keys()
-        print("[+] Aktuellen Marktguru API-Key erfolgreich geladen.")
     except Exception as e:
         print(f"[-] Fehler beim Laden des API-Keys: {e}")
         return
@@ -94,25 +92,34 @@ def check_redbull():
         return
 
     offers = data.get("results", [])
-    print(f"[*] {len(offers)} Red-Bull-Einträge insgesamt in {ZIP_CODE} gefunden.")
+    print(f"[*] {len(offers)} Treffer insgesamt in {ZIP_CODE} gefunden:")
+
     seen_ids = load_seen()
     new_deals = []
 
     for offer in offers:
         offer_id = str(offer.get("id"))
-        price = offer.get("price")
-        product = offer.get("product", {}).get("name", "Red Bull")
-        description = offer.get("description", "")
-
-        if "red bull" not in product.lower():
-            continue
-        if price is None or float(price) > MAX_PRICE:
-            continue
+        raw_price = offer.get("price")
+        product = (offer.get("product") or {}).get("name") or offer.get("title") or "Red Bull"
+        description = offer.get("description") or ""
 
         advertisers = offer.get("advertisers", [])
         shop = advertisers[0].get("name", "Unbekannter Markt") if advertisers else "Unbekannter Markt"
 
-        validity = offer.get("validityDates", [{}])[0]
+        print(f"   -> Gefunden: {shop} | {product} | Preis-Rohwert: {raw_price}")
+
+        if raw_price is None:
+            continue
+
+        try:
+            price = float(str(raw_price).replace(",", "."))
+        except ValueError:
+            continue
+
+        if price > MAX_PRICE:
+            continue
+
+        validity = (offer.get("validityDates") or [{}])[0]
         valid_from = format_date(validity.get("from"))
         valid_to = format_date(validity.get("to"))
 
@@ -122,13 +129,13 @@ def check_redbull():
             new_deals.append({
                 "shop": shop,
                 "product": product,
-                "price": f"{float(price):.2f}".replace(".", ",") + " €",
+                "price": f"{price:.2f}".replace(".", ",") + " €",
                 "desc": description,
                 "valid": f"{valid_from} – {valid_to}"
             })
 
     if not new_deals:
-        print("[*] Keine neuen Red-Bull-Deals unter 1,00 € gefunden.")
+        print("[*] Keine neuen Red-Bull-Deals bis 1,00 € gefunden.")
         return
 
     embeds = []
