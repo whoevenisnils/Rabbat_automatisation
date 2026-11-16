@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import requests
 from datetime import datetime
@@ -12,13 +13,27 @@ QUERY = "Red Bull"
 MAX_PRICE = 0.99  # Alles unter 1,00 €
 SEEN_FILE = "seen_deals.json"
 
-# Marktguru API (öffentlicher App-Key)
 API_URL = "https://api.marktguru.de/api/v1/offers/search"
-HEADERS = {
-    "x-apikey": "8Kk+pmbf7TgJ9nVj2cXeA5P3b1L0qR4sW6yU8iO0pA=",
-    "x-clientkey": "r2D2c3Po00000000000000000000000000000000000=",
-    "User-Agent": "Marktguru/5.0 (Android)"
-}
+
+def get_marktguru_keys():
+    """Liest den aktuell gültigen API-Key dynamisch aus der Marktguru-Webseite."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    res = requests.get("https://www.marktguru.de/", headers=headers, timeout=15)
+    res.raise_for_status()
+    html = res.text
+
+    # Marktguru bettet config/apiKey direkt im HTML/JS ein
+    api_match = re.search(r'"apiKey"\s*:\s*"([^"]+)"', html)
+    client_match = re.search(r'"clientKey"\s*:\s*"([^"]+)"', html)
+
+    if not api_match:
+        raise RuntimeError("Konnte keinen aktuellen apiKey auf marktguru.de finden.")
+
+    api_key = api_match.group(1)
+    client_key = client_match.group(1) if client_match else "r2D2c3Po00000000000000000000000000000000000="
+    return api_key, client_key
 
 def load_seen():
     if os.path.exists(SEEN_FILE):
@@ -47,6 +62,21 @@ def check_redbull():
         print("[-] Fehler: DISCORD_WEBHOOK Secret fehlt!")
         return
 
+    try:
+        api_key, client_key = get_marktguru_keys()
+        print("[+] Aktuellen Marktguru API-Key erfolgreich geladen.")
+    except Exception as e:
+        print(f"[-] Fehler beim Laden des API-Keys: {e}")
+        return
+
+    headers = {
+        "x-apikey": api_key,
+        "x-clientkey": client_key,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Origin": "https://www.marktguru.de",
+        "Referer": "https://www.marktguru.de/"
+    }
+
     params = {
         "as": "web",
         "limit": 50,
@@ -56,7 +86,7 @@ def check_redbull():
     }
 
     try:
-        res = requests.get(API_URL, headers=HEADERS, params=params, timeout=15)
+        res = requests.get(API_URL, headers=headers, params=params, timeout=15)
         res.raise_for_status()
         data = res.json()
     except Exception as e:
@@ -64,6 +94,7 @@ def check_redbull():
         return
 
     offers = data.get("results", [])
+    print(f"[*] {len(offers)} Red-Bull-Einträge insgesamt in {ZIP_CODE} gefunden.")
     seen_ids = load_seen()
     new_deals = []
 
@@ -72,17 +103,15 @@ def check_redbull():
         price = offer.get("price")
         product = offer.get("product", {}).get("name", "Red Bull")
         description = offer.get("description", "")
-        
-        # Prüfen ob "red bull" wirklich im Titel steckt & Preis unter 1 € liegt
+
         if "red bull" not in product.lower():
             continue
         if price is None or float(price) > MAX_PRICE:
             continue
 
-        # Händlername & Gültigkeit auslesen
         advertisers = offer.get("advertisers", [])
         shop = advertisers[0].get("name", "Unbekannter Markt") if advertisers else "Unbekannter Markt"
-        
+
         validity = offer.get("validityDates", [{}])[0]
         valid_from = format_date(validity.get("from"))
         valid_to = format_date(validity.get("to"))
@@ -102,13 +131,12 @@ def check_redbull():
         print("[*] Keine neuen Red-Bull-Deals unter 1,00 € gefunden.")
         return
 
-    # Schöne Discord-Embeds bauen
     embeds = []
-    for d in new_deals[:10]:  # Discord erlaubt max. 10 Embeds pro Nachricht
+    for d in new_deals[:10]:
         embeds.append({
             "title": f"🐂 {d['shop']} — {d['price']}",
             "description": f"**{d['product']}**\n{d['desc']}\n📅 **Gültig:** {d['valid']}",
-            "color": 0xDB0A40  # Red-Bull-Rot
+            "color": 0xDB0A40
         })
 
     payload = {
