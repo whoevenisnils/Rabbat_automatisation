@@ -1,0 +1,36 @@
+name: Red Bull Deal Check
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Läuft automatisch alle 6 Stunden
+  workflow_dispatch:       # Manueller Start über den "Run workflow"-Button
+
+permissions:
+  contents: write          # Nötig, damit seen_deals.json gespeichert werden kann
+
+jobs:
+  check-deals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Abhängigkeiten installieren
+        run: pip install requests
+
+      - name: Nach Red Bull Deals suchen
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python redbull_bot.py
+
+      - name: Gemerkte Deals speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_deals.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update seen deals" && git push)
